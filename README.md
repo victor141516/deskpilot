@@ -2,7 +2,7 @@
 
 An executable that lets an agent read and drive desktop applications. It runs as an MCP server (stdio) or as a one-shot command line with JSON output. No UI and no background service: each process lives for the MCP session or the single call.
 
-The Windows adapter ships today. The core (engine, tools, MCP, CLI, policy, elevated worker) is OS-agnostic; see [docs/arquitectura.md](docs/arquitectura.md) (Spanish).
+The Windows adapter ships today. The core (engine, tools, MCP, CLI, policy, elevated worker) is OS-agnostic; see [docs/architecture.md](docs/architecture.md).
 
 ## Install: ask your agent
 
