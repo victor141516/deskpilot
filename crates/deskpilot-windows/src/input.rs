@@ -14,6 +14,9 @@ use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
 const STEP: Duration = Duration::from_millis(12);
 /// One wheel notch.
 const WHEEL_DELTA: i32 = 120;
+/// Pause between typed characters. Faster typing makes WinUI text boxes
+/// (Windows 11 Notepad) drop or duplicate VK_PACKET characters.
+const CHAR_DELAY: Duration = Duration::from_millis(10);
 
 fn key_input(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
@@ -172,7 +175,7 @@ fn text(t: &str) -> Result<()> {
                 send(&inputs)?;
             }
         }
-        sleep(Duration::from_millis(2));
+        sleep(CHAR_DELAY);
     }
     Ok(())
 }

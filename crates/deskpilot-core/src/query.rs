@@ -9,7 +9,9 @@ use crate::model::{ElementInfo, ElementNode, Role, WindowId, WindowInfo};
 use crate::platform::Platform;
 
 /// Selects one top-level window. A plain string is a window id or, if no
-/// window has that id, a case-insensitive title fragment.
+/// window has that id, a case-insensitive title fragment. Several matches:
+/// the topmost main (unowned) window, else the topmost owned one (dialogs);
+/// filter by title to target a specific dialog.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum WindowSelector {
@@ -114,17 +116,21 @@ impl WindowSelector {
     }
 }
 
+/// Topmost match, preferring windows without an owner (main windows) over
+/// owned popups and dialogs of the same app.
 fn first_match(platform: &dyn Platform, filter: &WindowFilter) -> Result<WindowInfo> {
-    let windows = platform.windows(filter.include_hidden)?;
-    windows
+    let matches: Vec<WindowInfo> = platform
+        .windows(filter.include_hidden)?
         .into_iter()
-        .find(|w| filter.matches(w))
-        .ok_or_else(|| {
-            Error::NotFound(format!(
-                "no window matches {}",
-                serde_json::to_string(filter).unwrap_or_default()
-            ))
-        })
+        .filter(|w| filter.matches(w))
+        .collect();
+    let pick = matches.iter().position(|w| w.owner.is_none()).unwrap_or(0);
+    matches.into_iter().nth(pick).ok_or_else(|| {
+        Error::NotFound(format!(
+            "no window matches {}",
+            serde_json::to_string(filter).unwrap_or_default()
+        ))
+    })
 }
 
 /// Filters accessibility elements. All given fields must match.

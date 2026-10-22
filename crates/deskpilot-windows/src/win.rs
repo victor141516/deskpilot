@@ -20,11 +20,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_MENU,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, FindWindowExW, GA_ROOT, GW_OWNER, GetAncestor, GetClassNameW,
-    GetForegroundWindow, GetWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, MONITORINFOF_PRIMARY,
-    PostMessageW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER,
-    SetForegroundWindow, SetWindowPos, ShowWindowAsync, WM_CLOSE, WindowFromPoint,
+    BringWindowToTop, EnumWindows, FindWindowExW, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GetAncestor,
+    GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
+    IsWindowVisible, IsZoomed, MONITORINFOF_PRIMARY, PostMessageW, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindowAsync,
+    WINDOW_EX_STYLE, WM_CLOSE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WindowFromPoint,
 };
 use windows::core::BOOL;
 use windows::core::w;
@@ -149,8 +150,19 @@ pub fn info(hwnd: HWND, z_order: usize, procs: &mut ProcessTable, foreground: HW
     }
 }
 
+/// Default listing: what a user could switch to (visible, not cloaked, titled,
+/// with an area, and not a tool/popup window unless it asks for a taskbar
+/// button). Minimized windows keep their restore area.
 fn listed(hwnd: HWND) -> bool {
-    unsafe { IsWindowVisible(hwnd).as_bool() && !cloaked(hwnd) && GetWindowTextLengthW(hwnd) > 0 }
+    unsafe {
+        let ex = WINDOW_EX_STYLE(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32);
+        let tool = ex.contains(WS_EX_TOOLWINDOW) && !ex.contains(WS_EX_APPWINDOW);
+        IsWindowVisible(hwnd).as_bool()
+            && !tool
+            && !cloaked(hwnd)
+            && GetWindowTextLengthW(hwnd) > 0
+            && (IsIconic(hwnd).as_bool() || !frame_bounds(hwnd).is_empty())
+    }
 }
 
 pub fn windows(include_hidden: bool) -> Vec<WindowInfo> {
