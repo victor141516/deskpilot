@@ -4,6 +4,34 @@ Ejecutable para que un agente lea y maneje aplicaciones de escritorio. Funciona 
 
 Hoy incluye el adaptador de Windows. El núcleo (motor, herramientas, MCP, CLI, política, worker elevado) no depende del sistema operativo; ver [docs/arquitectura.md](docs/arquitectura.md).
 
+## Instalación: pídeselo a tu agente
+
+Copia este bloque y pégaselo a tu agente (Claude Code, Codex, oh my pi, Cursor…) en Windows:
+
+````text
+Instala el servidor MCP "deskpilot" (automatización de escritorio para Windows, https://github.com/victor141516/deskpilot) y regístralo en este cliente MCP para mi usuario.
+
+1. Descarga el ejecutable de la última release a %LOCALAPPDATA%\Programs\deskpilot\deskpilot.exe con PowerShell:
+   $dir = "$env:LOCALAPPDATA\Programs\deskpilot"
+   New-Item -ItemType Directory -Force $dir | Out-Null
+   Invoke-WebRequest -Uri "https://github.com/victor141516/deskpilot/releases/latest/download/deskpilot.exe" -OutFile "$dir\deskpilot.exe"
+   Unblock-File "$dir\deskpilot.exe"
+2. Comprueba que funciona: & "$dir\deskpilot.exe" --version  (debe imprimir "deskpilot <versión>").
+3. Regístralo como servidor MCP por stdio con nombre "deskpilot", comando = ruta absoluta del .exe (sin variables de entorno), argumentos ["mcp"]. Si el cliente admite un tiempo máximo por servidor o por herramienta, ponlo a 180 segundos: la herramienta "elevate" espera a que el usuario acepte el aviso UAC (hasta 120 s).
+   - Claude Code: claude mcp add --scope user deskpilot -- "<ruta>\deskpilot.exe" mcp
+   - Codex: en ~/.codex/config.toml añade
+       [mcp_servers.deskpilot]
+       command = '<ruta>\deskpilot.exe'
+       args = ["mcp"]
+       tool_timeout_sec = 180
+   - oh my pi: en ~/.omp/agent/mcp.json, dentro de "mcpServers", añade
+       "deskpilot": { "type": "stdio", "command": "<ruta con barras />deskpilot.exe", "args": ["mcp"], "timeout": 180000 }
+   - Cualquier otro cliente: el equivalente en su archivo de configuración MCP, sin borrar los servidores que ya existan.
+4. Recarga los servidores MCP (o dime que reinicie el cliente) y llama a la herramienta "info" de deskpilot para confirmar que responde. Dime la ruta instalada y el archivo de configuración que has modificado.
+````
+
+Para actualizar: cerrar las sesiones que lo usan y repetir el paso 1. Desinstalar: borrar la carpeta y la entrada del servidor en la configuración del cliente.
+
 ## Principio: lo menos invasivo primero
 
 Leer:
@@ -24,41 +52,15 @@ Cada intento se verifica leyendo el estado después (seleccionado, marcado, desp
 
 `max_strategy` y `min_strategy` acotan la escalera; `--max-strategy messages` impide quitar el foco al usuario en toda la sesión.
 
-## Compilar
-
-```powershell
-cargo build --release
-# target\release\deskpilot.exe
-```
-
-Requiere Rust 1.85 o superior y Windows 10/11.
-
-## Uso como MCP
-
-Instalar fuera del repo para que recompilar no choque con el servidor en uso (Windows bloquea el `.exe` mientras corre):
+## Compilar desde el código
 
 ```powershell
 cargo install --path crates/deskpilot --locked   # → %USERPROFILE%\.cargo\bin\deskpilot.exe
 ```
 
-oh my pi (`~/.omp/agent/mcp.json`):
+Requiere Rust 1.85 o superior y Windows 10/11. El C runtime se enlaza estático (`.cargo/config.toml`), así que el `.exe` no necesita el Visual C++ Redistributable. Instalar fuera del repo evita que recompilar choque con un servidor en uso (Windows bloquea el `.exe` mientras corre).
 
-```json
-{
-  "mcpServers": {
-    "deskpilot": {
-      "type": "stdio",
-      "command": "C:/Users/<usuario>/.cargo/bin/deskpilot.exe",
-      "args": ["mcp"],
-      "timeout": 180000
-    }
-  }
-}
-```
-
-`timeout` cubre el aviso UAC de `elevate` (hasta 120 s) y esperas largas de `wait_for`. Para actualizar, cerrar las sesiones que lo usan, repetir `cargo install` y `/mcp reload`.
-
-Claude Code: `claude mcp add deskpilot -- C:\ruta\deskpilot.exe mcp`. Cualquier cliente MCP por stdio sirve: comando `deskpilot.exe`, argumentos `["mcp"]`. El servidor envía instrucciones de uso en `initialize`.
+El servidor envía sus instrucciones de uso en `initialize`; las herramientas llevan descripción y esquema, así que no hace falta documentación aparte para el agente.
 
 ## Uso por línea de comandos
 
