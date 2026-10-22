@@ -35,11 +35,30 @@ Requiere Rust 1.85 o superior y Windows 10/11.
 
 ## Uso como MCP
 
+Instalar fuera del repo para que recompilar no choque con el servidor en uso (Windows bloquea el `.exe` mientras corre):
+
 ```powershell
-claude mcp add deskpilot -- C:\ruta\deskpilot.exe mcp
+cargo install --path crates/deskpilot --locked   # → %USERPROFILE%\.cargo\bin\deskpilot.exe
 ```
 
-Cualquier cliente MCP por stdio sirve: comando `deskpilot.exe`, argumentos `["mcp"]`. El servidor envía instrucciones de uso en `initialize`.
+oh my pi (`~/.omp/agent/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "deskpilot": {
+      "type": "stdio",
+      "command": "C:/Users/<usuario>/.cargo/bin/deskpilot.exe",
+      "args": ["mcp"],
+      "timeout": 180000
+    }
+  }
+}
+```
+
+`timeout` cubre el aviso UAC de `elevate` (hasta 120 s) y esperas largas de `wait_for`. Para actualizar, cerrar las sesiones que lo usan, repetir `cargo install` y `/mcp reload`.
+
+Claude Code: `claude mcp add deskpilot -- C:\ruta\deskpilot.exe mcp`. Cualquier cliente MCP por stdio sirve: comando `deskpilot.exe`, argumentos `["mcp"]`. El servidor envía instrucciones de uso en `initialize`.
 
 ## Uso por línea de comandos
 
