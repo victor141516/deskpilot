@@ -1,0 +1,18 @@
+[package]
+name = "deskpilot-core"
+description = "Platform-agnostic desktop automation engine, tool registry and MCP server for deskpilot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+clap.workspace = true
+dirs.workspace = true
+image.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

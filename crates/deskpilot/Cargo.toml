@@ -1,0 +1,17 @@
+[package]
+name = "deskpilot"
+description = "Desktop automation for agents: MCP server and CLI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "deskpilot"
+path = "src/main.rs"
+
+[dependencies]
+deskpilot-core.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+deskpilot-windows.workspace = true

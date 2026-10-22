@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/deskpilot-core", "crates/deskpilot-windows", "crates/deskpilot"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+deskpilot-core = { path = "crates/deskpilot-core" }
+deskpilot-windows = { path = "crates/deskpilot-windows" }
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4.6", features = ["derive"] }
+dirs = "6"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+schemars = "1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
