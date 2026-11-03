@@ -15,3 +15,6 @@ deskpilot-core.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 deskpilot-windows.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+deskpilot-macos.workspace = true
