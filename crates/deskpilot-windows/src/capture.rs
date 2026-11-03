@@ -85,6 +85,7 @@ pub fn screen(r: Rect) -> Result<Capture> {
             height: r.height as u32,
             rgba: result?,
             origin: Point { x: r.x, y: r.y },
+            pixel_scale: 1.0,
             occlusion_free: false,
         })
     }
@@ -130,6 +131,7 @@ fn print_window(hwnd: HWND, frame: Rect) -> Result<Capture> {
                 x: full.x,
                 y: full.y,
             },
+            pixel_scale: 1.0,
             occlusion_free: true,
         };
         // Drop the invisible resize borders.

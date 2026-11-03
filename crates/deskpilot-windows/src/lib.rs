@@ -16,14 +16,14 @@ mod util;
 mod win;
 
 use deskpilot_core::Result;
-use deskpilot_core::keys::KeyStroke;
+use deskpilot_core::keys::{Key, KeyChord, KeyStroke};
 use deskpilot_core::model::{
     Capture, ElementInfo, ElementNode, ElementRef, MonitorInfo, OcrLine, Point, Rect, WindowId,
     WindowInfo,
 };
 use deskpilot_core::platform::{
     AxOp, ClipboardContent, Duplex, LaunchResult, LaunchSpec, MessageOp, MouseOp, Platform,
-    PlatformInfo, TreeOptions, TreeRoot, WindowOp,
+    PlatformInfo, Shortcut, TreeOptions, TreeRoot, WindowOp,
 };
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
@@ -58,8 +58,22 @@ impl Platform for WindowsPlatform {
             os: "windows",
             elevated: self.elevated,
             can_elevate: !self.elevated,
+            messages: true,
+            permissions: vec![],
         }
     }
+
+    fn shortcut(&self, shortcut: Shortcut) -> Option<KeyChord> {
+        Some(match shortcut {
+            Shortcut::SelectAll => KeyChord::with(Key::Char('a'), true, false, false),
+            Shortcut::OpenDropdown => KeyChord::with(Key::Down, false, true, false),
+            Shortcut::CloseDropdown => KeyChord::with(Key::Up, false, true, false),
+            Shortcut::NextTab => KeyChord::with(Key::Tab, true, false, false),
+        })
+    }
+
+    /// Windows has no per-app privacy gate for UI Automation, input or capture.
+    fn request_permissions(&self, _wait: bool) {}
 
     fn monitors(&self) -> Result<Vec<MonitorInfo>> {
         Ok(win::monitors())

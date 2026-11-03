@@ -4,9 +4,11 @@
 use std::sync::Mutex;
 
 use super::*;
-use crate::keys::{Key, KeyStroke};
+use crate::keys::{Key, KeyChord, KeyStroke};
 use crate::model::{Capture, MonitorInfo, OcrLine, Point, Rect};
-use crate::platform::{ClipboardContent, Duplex, LaunchResult, LaunchSpec, MouseOp, PlatformInfo};
+use crate::platform::{
+    ClipboardContent, Duplex, LaunchResult, LaunchSpec, MouseOp, PlatformInfo, Shortcut,
+};
 
 const DIALOG: &str = "w-dialog";
 const EDITOR: &str = "w-editor";
@@ -208,8 +210,19 @@ impl Platform for Fake {
             os: "fake",
             elevated: false,
             can_elevate: false,
+            messages: true,
+            permissions: vec![],
         }
     }
+    fn shortcut(&self, s: Shortcut) -> Option<KeyChord> {
+        Some(match s {
+            Shortcut::SelectAll => KeyChord::with(Key::Char('a'), true, false, false),
+            Shortcut::OpenDropdown => KeyChord::with(Key::Down, false, true, false),
+            Shortcut::CloseDropdown => KeyChord::with(Key::Up, false, true, false),
+            Shortcut::NextTab => KeyChord::with(Key::Tab, true, false, false),
+        })
+    }
+    fn request_permissions(&self, _: bool) {}
     fn monitors(&self) -> Result<Vec<MonitorInfo>> {
         Ok(vec![])
     }

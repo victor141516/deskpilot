@@ -12,9 +12,19 @@ const SUPPORTED_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26",
 
 const INSTRUCTIONS: &str = "deskpilot reads and drives desktop applications. Work from cheap to expensive and from least to most invasive:\n\
 1. Discover with list_windows / list_apps, then find_elements or get_tree (compact accessibility text; [ref] values identify elements).\n\
-2. Change things with `act` (press, select, toggle, check, uncheck, expand, collapse, set_value, focus, scroll_into_view). It escalates by itself: accessibility action → window messages → keyboard with verified focus navigation → real mouse, and reports each attempt. Lower `max_strategy` to forbid stealing the user's focus.\n\
+2. Change things with `act` (press, select, toggle, check, uncheck, expand, collapse, set_value, focus, scroll_into_view). It escalates by itself: accessibility action → window messages (Windows only) → keyboard with verified focus navigation → real mouse, and reports each attempt. Lower `max_strategy` to forbid stealing the user's focus.\n\
 3. Only when an app exposes no accessibility data: screenshot / ocr (expensive in tokens) and `mouse` (moves the user's pointer).\n\
-Windows of processes running as administrator (flag `admin` in list_windows) need \"elevated\": true; the first such call shows a UAC prompt to the user.";
+Errors with kind `permission_required` mean the user has to grant an OS privacy permission; tell them, do not retry.";
+
+const ELEVATION_INSTRUCTIONS: &str = "\nWindows of processes running as administrator (flag `admin` in list_windows) need \"elevated\": true; the first such call shows a UAC prompt to the user.";
+
+fn instructions(dispatcher: &Dispatcher) -> String {
+    let mut text = INSTRUCTIONS.to_string();
+    if crate::tools::offers_elevation(&dispatcher.platform().info()) {
+        text.push_str(ELEVATION_INSTRUCTIONS);
+    }
+    text
+}
 
 pub fn serve(dispatcher: &Dispatcher) -> std::io::Result<()> {
     let stdin = std::io::stdin();
@@ -70,7 +80,7 @@ pub fn handle(dispatcher: &Dispatcher, message: Value) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": "deskpilot", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": INSTRUCTIONS,
+                    "instructions": instructions(dispatcher),
                 }),
             )
         }

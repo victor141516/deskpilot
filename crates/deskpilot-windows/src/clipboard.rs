@@ -103,6 +103,7 @@ fn dib_to_capture(bytes: &[u8]) -> Option<Capture> {
         height: height as u32,
         rgba,
         origin: Point { x: 0, y: 0 },
+        pixel_scale: 1.0,
         occlusion_free: true,
     })
 }

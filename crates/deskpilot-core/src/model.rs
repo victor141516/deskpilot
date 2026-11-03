@@ -5,7 +5,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Rectangle in physical screen pixels (virtual-desktop coordinates).
+/// Rectangle in screen units (virtual-desktop coordinates): physical pixels
+/// on Windows, points on macOS. Bounds, input and window geometry share it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Rect {
     pub x: i32,
@@ -375,7 +376,7 @@ impl ElementNode {
     }
 }
 
-/// Raw RGBA8 image in physical pixels plus where it sits on the virtual desktop.
+/// Raw RGBA8 image plus where it sits on the virtual desktop.
 #[derive(Debug, Clone)]
 pub struct Capture {
     pub width: u32,
@@ -384,10 +385,36 @@ pub struct Capture {
     pub rgba: Vec<u8>,
     /// Screen position of pixel (0, 0).
     pub origin: Point,
+    /// Image pixels per screen unit (1.0 on Windows, 2.0 on a Retina display).
+    pub pixel_scale: f64,
     /// True when the pixels come from the window itself (not from whatever covers it).
     pub occlusion_free: bool,
 }
 
+impl Capture {
+    /// Screen-unit rectangle covered by the image.
+    pub fn screen_rect(&self) -> Rect {
+        Rect::new(
+            self.origin.x,
+            self.origin.y,
+            (self.width as f64 / self.pixel_scale).round() as i32,
+            (self.height as f64 / self.pixel_scale).round() as i32,
+        )
+    }
+
+    /// Converts a rectangle in image pixels to screen units.
+    pub fn to_screen(&self, r: Rect) -> Rect {
+        let s = self.pixel_scale;
+        let x0 = (r.x as f64 / s).floor() as i32;
+        let y0 = (r.y as f64 / s).floor() as i32;
+        let x1 = ((r.x + r.width) as f64 / s).ceil() as i32;
+        let y1 = ((r.y + r.height) as f64 / s).ceil() as i32;
+        Rect::new(self.origin.x + x0, self.origin.y + y0, x1 - x0, y1 - y0)
+    }
+}
+
+/// OCR result. Adapters return bounds in image pixels; the `ocr` tool converts
+/// them to screen units.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OcrLine {
     pub text: String,

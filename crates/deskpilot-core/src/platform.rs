@@ -9,7 +9,7 @@
 use std::io::{Read, Write};
 
 use crate::error::Result;
-use crate::keys::KeyStroke;
+use crate::keys::{KeyChord, KeyStroke};
 use crate::model::{
     Capture, ElementInfo, ElementNode, ElementRef, MonitorInfo, OcrLine, Point, Rect, WindowId,
     WindowInfo,
@@ -20,8 +20,38 @@ pub struct PlatformInfo {
     pub os: &'static str,
     /// The current process runs with administrator rights.
     pub elevated: bool,
-    /// The adapter can start an elevated worker.
+    /// The adapter can start an elevated worker (and the `elevate` tool and
+    /// `elevated` argument are offered).
     pub can_elevate: bool,
+    /// The platform has native window messages for controls (the `messages`
+    /// strategy); when false the engine skips that rung of the ladder.
+    pub messages: bool,
+    /// OS privacy permissions the process needs, with their current state.
+    /// Empty when the OS has no such gate.
+    pub permissions: Vec<PermissionStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PermissionStatus {
+    /// Stable id (`accessibility`, `screen_recording`).
+    pub id: &'static str,
+    pub granted: bool,
+    /// What stops working without it.
+    pub needed_for: &'static str,
+}
+
+/// Platform-specific keyboard conventions the engine needs. `None` means the
+/// platform has no reliable key for it and the keyboard step is skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shortcut {
+    /// Select all text in the focused field.
+    SelectAll,
+    /// Open the drop-down of a focused combo box / pop-up button.
+    OpenDropdown,
+    /// Close the drop-down of a focused combo box.
+    CloseDropdown,
+    /// Switch to the next page of a tab view regardless of focus.
+    NextTab,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -121,6 +151,15 @@ impl<T: Read + Write + Send> Duplex for T {}
 
 pub trait Platform: Send + Sync {
     fn info(&self) -> PlatformInfo;
+    fn shortcut(&self, shortcut: Shortcut) -> Option<KeyChord>;
+    /// Called once at start-up by the commands that use the desktop. Adapters
+    /// with OS privacy permissions check them and, when some are missing, ask
+    /// the user to grant them. With `wait` it returns once they are granted or
+    /// the user dismisses the request (one-shot CLI calls); without it, it
+    /// returns at once and the request stays on screen (MCP server, whose
+    /// client would time out). Missing permissions are not an error here: the
+    /// affected tools fail with `permission_required`.
+    fn request_permissions(&self, wait: bool);
 
     // ---- discovery -------------------------------------------------------
     fn monitors(&self) -> Result<Vec<MonitorInfo>>;

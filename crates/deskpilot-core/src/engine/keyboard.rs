@@ -10,7 +10,7 @@ use super::{ActOptions, Engine, Intent, KEY_SETTLE, SETTLE};
 use crate::error::{Error, Result};
 use crate::keys::{Key, KeyChord, KeyStroke};
 use crate::model::{ArrowAxis, ElementInfo, ElementRef, Role, ToggleState};
-use crate::platform::{AxOp, Platform, TreeOptions, TreeRoot, WindowOp};
+use crate::platform::{AxOp, Platform, Shortcut, TreeOptions, TreeRoot, WindowOp};
 
 pub(super) fn run(
     engine: &Engine,
@@ -59,25 +59,29 @@ pub(super) fn run(
         Intent::Expand => match current.role {
             Role::TreeItem => vec![chord(Key::Right)],
             Role::MenuItem => vec![chord(Key::Enter)],
-            _ => vec![KeyStroke::Chord(KeyChord::with(
-                Key::Down,
-                false,
-                true,
-                false,
-            ))],
+            _ => vec![KeyStroke::Chord(shortcut(p, Shortcut::OpenDropdown)?)],
         },
         Intent::Collapse => match current.role {
             Role::TreeItem => vec![chord(Key::Left)],
-            Role::ComboBox => vec![KeyStroke::Chord(KeyChord::with(
-                Key::Up,
-                false,
-                true,
-                false,
-            ))],
+            Role::ComboBox => vec![
+                p.shortcut(Shortcut::CloseDropdown)
+                    .map_or_else(|| chord(Key::Escape), KeyStroke::Chord),
+            ],
             _ => vec![chord(Key::Escape)],
         },
+        // A closed, non-editable drop-down picks the option whose text is typed
+        // (type-ahead); "select all" first would break that. Characters go as
+        // individual keys: some pop-ups (Chromium's <select>) ignore synthesized
+        // Unicode text events.
+        Intent::SetValue if current.role == Role::ComboBox && current.read_only != Some(false) => {
+            value
+                .unwrap_or_default()
+                .chars()
+                .map(|c| chord(Key::Char(c)))
+                .collect()
+        }
         Intent::SetValue => vec![
-            KeyStroke::Chord(KeyChord::with(Key::Char('a'), true, false, false)),
+            KeyStroke::Chord(shortcut(p, Shortcut::SelectAll)?),
             KeyStroke::Text(value.unwrap_or_default().to_string()),
         ],
     };
@@ -110,6 +114,12 @@ pub(super) fn bring_to_front(p: &dyn Platform, target: &ElementInfo) -> Result<(
 
 fn chord(key: Key) -> KeyStroke {
     KeyStroke::Chord(KeyChord::plain(key))
+}
+
+/// The platform's chord for `s`, or `Unsupported` so the ladder moves on.
+pub(super) fn shortcut(p: &dyn Platform, s: Shortcut) -> Result<KeyChord> {
+    p.shortcut(s)
+        .ok_or_else(|| Error::Unsupported(format!("no keyboard shortcut for {s:?} here")))
 }
 
 fn describe(k: &KeyStroke) -> String {
@@ -200,18 +210,13 @@ fn focus(p: &dyn Platform, target: &ElementInfo, max_steps: usize) -> Result<Str
         sleep(KEY_SETTLE);
     }
 
-    // Property sheets and tab views switch pages with Ctrl+Tab regardless of focus.
-    if target.role == Role::TabItem {
+    // Property sheets and tab views switch pages with a "next tab" chord regardless of focus.
+    if let (Role::TabItem, Some(next)) = (target.role, p.shortcut(Shortcut::NextTab)) {
         for n in 1..=siblings.len().max(1) * 2 {
-            p.send_keys(&[KeyStroke::Chord(KeyChord::with(
-                Key::Tab,
-                true,
-                false,
-                false,
-            ))])?;
+            p.send_keys(&[KeyStroke::Chord(next)])?;
             sleep(SETTLE);
             if p.element(&target.id).ok().and_then(|e| e.selected) == Some(true) {
-                return Ok(format!("ctrl+tab×{n}"));
+                return Ok(format!("next_tab×{n}"));
             }
         }
     }

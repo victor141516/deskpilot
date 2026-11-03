@@ -129,6 +129,9 @@ pub struct Engine<'a> {
 /// read its state back.
 pub(crate) const SETTLE: Duration = Duration::from_millis(120);
 pub(crate) const KEY_SETTLE: Duration = Duration::from_millis(60);
+/// Extra time a state change may take to show up before an attempt counts as
+/// not reached.
+pub(crate) const VERIFY_GRACE: Duration = Duration::from_millis(500);
 
 impl<'a> Engine<'a> {
     pub fn new(platform: &'a dyn Platform, policy: &'a Policy) -> Self {
@@ -194,9 +197,11 @@ impl<'a> Engine<'a> {
         }
 
         let mut previous_foreground: Option<WindowId> = None;
+        let has_messages = self.platform.info().messages;
         for strategy in Strategy::ALL
             .into_iter()
             .filter(|s| *s >= options.min_strategy && *s <= ceiling)
+            .filter(|s| *s != Strategy::Messages || has_messages)
         {
             if self.policy.dry_run {
                 let method = match strategy {
@@ -243,7 +248,11 @@ impl<'a> Engine<'a> {
 
             let method = match result {
                 Ok(method) => method,
-                Err(e @ (Error::ElevationRequired(_) | Error::PolicyDenied(_))) => return Err(e),
+                Err(
+                    e @ (Error::ElevationRequired(_)
+                    | Error::PermissionRequired(_)
+                    | Error::PolicyDenied(_)),
+                ) => return Err(e),
                 Err(Error::Unsupported(reason)) => {
                     report.attempts.push(Attempt {
                         strategy,
@@ -265,14 +274,16 @@ impl<'a> Engine<'a> {
             };
 
             sleep(SETTLE);
-            let outcome = verify(
-                self.platform,
-                &before,
-                intent,
-                value,
-                baseline.as_ref(),
-                &window,
-            );
+            let check = || verify(self.platform, &before, intent, value, baseline.as_ref(), &window);
+            let mut outcome = check();
+            // Apps apply some changes asynchronously (Chromium closes a <select>
+            // menu ~250 ms after Escape): re-read the state for a short while
+            // before escalating, so the next strategy does not undo the change.
+            let deadline = std::time::Instant::now() + VERIFY_GRACE;
+            while outcome == AttemptOutcome::NotReached && std::time::Instant::now() < deadline {
+                sleep(SETTLE);
+                outcome = check();
+            }
             report.attempts.push(Attempt {
                 strategy,
                 outcome,
@@ -490,12 +501,13 @@ fn verify(
     baseline: Option<&Fingerprint>,
     window: &WindowInfo,
 ) -> AttemptOutcome {
-    let after = p.element(&before.id).ok();
-    let vanished = after.is_none();
+    let Some(after) = p.element(&before.id).ok() else {
+        // The element disappeared: the action had an effect (dialog closed, page
+        // changed, tab switched to another window).
+        return AttemptOutcome::Changed;
+    };
     let by_change = || match baseline {
-        Some(b) if vanished || *b != Fingerprint::capture(p, window, b.with_focus) => {
-            AttemptOutcome::Changed
-        }
+        Some(b) if *b != Fingerprint::capture(p, window, b.with_focus) => AttemptOutcome::Changed,
         _ => AttemptOutcome::NoObservableChange,
     };
     let state = |reached: bool| {
@@ -504,14 +516,6 @@ fn verify(
         } else {
             AttemptOutcome::NotReached
         }
-    };
-    let Some(after) = after else {
-        // The element disappeared: the action had an effect (dialog closed, page changed).
-        return if *intent == Intent::Press {
-            AttemptOutcome::Changed
-        } else {
-            by_change()
-        };
     };
     match intent {
         Intent::Press => by_change(),

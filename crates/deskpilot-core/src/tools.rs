@@ -21,7 +21,8 @@ use crate::imaging::{self, ImageFormat};
 use crate::keys::{self, KeyItem};
 use crate::model::{AppInfo, AppWindow, Capture, ElementInfo, ElementRef, Point, Rect, WindowInfo};
 use crate::platform::{
-    ClipboardContent, LaunchSpec, MouseButton, MouseOp, Platform, TreeOptions, TreeRoot, WindowOp,
+    ClipboardContent, LaunchSpec, MouseButton, MouseOp, Platform, PlatformInfo, TreeOptions,
+    TreeRoot, WindowOp,
 };
 use crate::policy::{Policy, Strategy};
 use crate::query::{ElementQuery, WindowFilter, WindowSelector};
@@ -110,11 +111,7 @@ where
         obj.remove("$schema");
         obj.remove("title");
         obj.entry("type").or_insert(json!("object"));
-        let props = obj.entry("properties").or_insert_with(|| json!({}));
-        props["elevated"] = json!({
-            "type": "boolean",
-            "description": "Run this call in the elevated (administrator) worker. Needed to read or control windows of processes running as administrator. The first use shows a UAC prompt to the user; the worker then lives for the rest of the session."
-        });
+        obj.entry("properties").or_insert_with(|| json!({}));
     }
     ToolSpec {
         name,
@@ -128,6 +125,12 @@ where
             f(ctx, parsed)
         }),
     }
+}
+
+/// Elevation is offered when the platform has an administrator worker (or this
+/// process is that worker).
+pub fn offers_elevation(info: &PlatformInfo) -> bool {
+    info.can_elevate || info.elevated
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +374,7 @@ pub struct WindowArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LaunchArgs {
-    /// Executable path or name, document, folder, URI (`ms-settings:sound`), control panel item (`mmsys.cpl`) or app id.
+    /// Executable path or name, document, folder, URI or app id. Windows: `ms-settings:sound`, `mmsys.cpl`. macOS: app name (`Safari`), bundle id (`com.apple.Safari`), `.app` path, `x-apple.systempreferences:` URI.
     pub target: String,
     #[serde(default)]
     pub args: Vec<String>,
@@ -440,12 +443,15 @@ pub struct OcrArgs {
 // Registry
 // ---------------------------------------------------------------------------
 
-pub fn registry() -> Vec<ToolSpec> {
-    vec![
+/// Tools offered on this platform. `elevated` / `elevate` exist only where an
+/// administrator worker can run.
+pub fn registry(platform: &PlatformInfo) -> Vec<ToolSpec> {
+    let elevation = offers_elevation(platform);
+    let mut tools = vec![
         tool(
             "info",
             false,
-            "Platform, privilege and policy status: OS, whether this process or the elevated worker is administrator, deny list, strategy ceiling, dry-run.",
+            "Platform, privilege and policy status: OS, administrator state and elevated worker (where supported), OS privacy permissions, deny list, strategy ceiling, dry-run.",
             info,
         ),
         tool(
@@ -475,7 +481,7 @@ pub fn registry() -> Vec<ToolSpec> {
         tool(
             "get_tree",
             false,
-            "Read the accessibility tree of a window (default: foreground) or element as compact text: [ref] role \"name\" #automation_id (x,y wxh) {states} value=… actions=…. Use the [ref] in other tools.",
+            "Read the accessibility tree of a window (default: foreground) or element as compact text: [ref] role \"name\" #automation_id (x,y wxh) {states} value=… actions=…. Names and values longer than 120 characters end in …; read them whole with read_text on the [ref]. Use the [ref] in other tools.",
             get_tree,
         ),
         tool(
@@ -505,7 +511,7 @@ pub fn registry() -> Vec<ToolSpec> {
         tool(
             "read_text",
             false,
-            "Text content of a document/editor element, or the visible texts of a window or element subtree.",
+            "Full text of an element (document/editor text, or every name and value in its subtree, unclipped) or the visible texts of a window. Use it for long names and values that get_tree/find_elements clip with ….",
             read_text,
         ),
         tool(
@@ -535,7 +541,7 @@ pub fn registry() -> Vec<ToolSpec> {
         tool(
             "launch",
             true,
-            "Open an application, document, folder, URI or control panel item and wait for its new window.",
+            "Open an application, document, folder or URI and wait for its new window.",
             launch,
         ),
         tool(
@@ -568,13 +574,22 @@ pub fn registry() -> Vec<ToolSpec> {
             "Colour of the screen pixel at a point.",
             pixel,
         ),
-        tool(
+    ];
+    if elevation {
+        tools.push(tool(
             "elevate",
             false,
             "Start the elevated (administrator) worker now. Shows a UAC prompt to the user. Afterwards pass \"elevated\": true to any tool to run it as administrator.",
             elevate,
-        ),
-    ]
+        ));
+        for t in &mut tools {
+            t.input_schema["properties"]["elevated"] = json!({
+                "type": "boolean",
+                "description": "Run this call in the elevated (administrator) worker. Needed to read or control windows of processes running as administrator. The first use shows a UAC prompt to the user; the worker then lives for the rest of the session."
+            });
+        }
+    }
+    tools
 }
 
 // ---------------------------------------------------------------------------
@@ -770,13 +785,17 @@ fn info(ctx: &Ctx, _: NoArgs) -> Result<ToolOutput> {
         "elevated": i.elevated,
         "can_elevate": i.can_elevate,
         "elevated_worker_running": worker_active,
+        "permissions": i.permissions,
         "policy": {
             "deny_processes": ctx.policy.deny_processes,
             "max_strategy": ctx.policy.max_strategy,
             "dry_run": ctx.policy.dry_run,
             "audit_log": ctx.policy.audit_path,
         },
-        "strategies": Strategy::ALL,
+        "strategies": Strategy::ALL
+            .into_iter()
+            .filter(|s| *s != Strategy::Messages || i.messages)
+            .collect::<Vec<_>>(),
     }))
 }
 
@@ -1011,7 +1030,7 @@ fn read_text(ctx: &Ctx, a: ReadTextArgs) -> Result<ToolOutput> {
     let max = a.max_chars.unwrap_or(20_000);
     let root = match &a.element {
         Some(e) => {
-            if let Some(text) = ctx.platform.element_text(e)? {
+            if let Some(text) = ctx.platform.element_text(e)?.filter(|t| !t.trim().is_empty()) {
                 return finish_text(text, max, "text_pattern");
             }
             TreeRoot::Element(e.clone())
@@ -1072,7 +1091,13 @@ fn act(ctx: &Ctx, a: ActArgs) -> Result<ToolOutput> {
         .act(&target, &a.action, a.value.as_deref(), &options)?;
     let mut text = format!(
         "{} {:?} on {} via {} (verified: {})",
-        if report.success { "done" } else { "FAILED" },
+        if report.dry_run {
+            "plan:"
+        } else if report.success {
+            "done"
+        } else {
+            "FAILED"
+        },
         a.action,
         render::element_line(&target),
         report
@@ -1094,8 +1119,26 @@ fn act(ctx: &Ctx, a: ActArgs) -> Result<ToolOutput> {
             }
         ));
     }
-    if let Some(e) = &report.element {
-        text.push_str(&format!("\n  now: {}", render::element_line(e)));
+    match &report.element {
+        Some(e) => text.push_str(&format!("\n  now: {}", render::element_line(e))),
+        // The element is gone: say where the app's view went (Fork shows each tab
+        // as its own window, dialogs replace their parent...). Windows come in
+        // z-order, so the first other titled window of the app is the one shown.
+        None if !report.dry_run => {
+            if let Some(w) = ctx
+                .platform
+                .windows(false)
+                .unwrap_or_default()
+                .into_iter()
+                .find(|w| w.pid == target.pid && w.id != target.window && !w.title.is_empty())
+            {
+                text.push_str(&format!(
+                    "\n  element gone; the app now shows {}",
+                    window_line(&w)
+                ));
+            }
+        }
+        None => {}
     }
     if let Some(w) = &report.focus_restored_to {
         text.push_str(&format!("\n  foreground restored to {w}"));
@@ -1288,9 +1331,10 @@ fn launch(ctx: &Ctx, a: LaunchArgs) -> Result<ToolOutput> {
         cwd: a.cwd,
     })?;
     let mut new_windows = Vec::new();
+    let mut existing = Vec::new();
     if a.wait_for_window.unwrap_or(true) {
         let timeout = Duration::from_millis(a.timeout_ms.unwrap_or(15_000));
-        new_windows = poll(
+        let waited = poll(
             timeout,
             Duration::from_millis(250),
             "waiting for a new window",
@@ -1303,13 +1347,38 @@ fn launch(ctx: &Ctx, a: LaunchArgs) -> Result<ToolOutput> {
                     .collect();
                 Ok((!fresh.is_empty()).then_some(fresh))
             },
-        )?;
+        );
+        match waited {
+            Ok(fresh) => new_windows = fresh,
+            // An app that was already running just comes to the front without a
+            // new window: hand back its existing windows instead of failing.
+            Err(Error::Timeout(msg)) => {
+                existing = match result.pid {
+                    Some(pid) => ctx
+                        .platform
+                        .windows(false)?
+                        .into_iter()
+                        .filter(|w| w.pid == pid || w.app_pid == Some(pid))
+                        .collect(),
+                    None => Vec::new(),
+                };
+                if existing.is_empty() {
+                    return Err(Error::Timeout(msg));
+                }
+            }
+            Err(e) => return Err(e),
+        }
     }
-    let text = std::iter::once(format!("launched {} (pid {:?})", a.target, result.pid))
-        .chain(new_windows.iter().map(window_line))
-        .collect::<Vec<_>>()
-        .join("\n");
-    Ok(ToolOutput::data(json!({ "pid": result.pid, "new_windows": new_windows }))?.with_text(text))
+    let mut lines = vec![format!("launched {} (pid {:?})", a.target, result.pid)];
+    lines.extend(new_windows.iter().map(window_line));
+    if !existing.is_empty() {
+        lines.push("no new window; the app was already running with:".into());
+        lines.extend(existing.iter().map(window_line));
+    }
+    Ok(ToolOutput::data(
+        json!({ "pid": result.pid, "new_windows": new_windows, "existing_windows": existing }),
+    )?
+    .with_text(lines.join("\n")))
 }
 
 fn wait_for(ctx: &Ctx, a: WaitArgs) -> Result<ToolOutput> {
@@ -1416,11 +1485,9 @@ fn ocr(ctx: &Ctx, a: OcrArgs) -> Result<ToolOutput> {
     let (cap, warning) = capture(ctx, &a.target)?;
     let mut lines = ctx.platform.ocr(&cap, a.language.as_deref())?;
     for line in &mut lines {
-        line.bounds.x += cap.origin.x;
-        line.bounds.y += cap.origin.y;
+        line.bounds = cap.to_screen(line.bounds);
         for w in &mut line.words {
-            w.bounds.x += cap.origin.x;
-            w.bounds.y += cap.origin.y;
+            w.bounds = cap.to_screen(w.bounds);
         }
     }
     let mut text: Vec<String> = warning
@@ -1465,9 +1532,19 @@ fn elevate(ctx: &Ctx, _: NoArgs) -> Result<ToolOutput> {
 mod tests {
     use super::*;
 
+    fn info(can_elevate: bool) -> PlatformInfo {
+        PlatformInfo {
+            os: "test",
+            elevated: false,
+            can_elevate,
+            messages: true,
+            permissions: vec![],
+        }
+    }
+
     #[test]
-    fn every_tool_schema_is_an_object_with_elevated() {
-        for t in registry() {
+    fn elevation_is_offered_only_where_the_platform_supports_it() {
+        for t in registry(&info(true)) {
             assert_eq!(t.input_schema["type"], "object", "{}", t.name);
             assert_eq!(
                 t.input_schema["properties"]["elevated"]["type"], "boolean",
@@ -1475,11 +1552,18 @@ mod tests {
                 t.name
             );
         }
+        let plain = registry(&info(false));
+        assert!(plain.iter().all(|t| t.name != "elevate"));
+        for t in &plain {
+            assert_eq!(t.input_schema["type"], "object", "{}", t.name);
+            assert!(t.input_schema["properties"].get("elevated").is_none(), "{}", t.name);
+        }
     }
 
     #[test]
     fn tool_names_are_unique() {
-        let names: HashSet<_> = registry().iter().map(|t| t.name).collect();
-        assert_eq!(names.len(), registry().len());
+        let tools = registry(&info(true));
+        let names: HashSet<_> = tools.iter().map(|t| t.name).collect();
+        assert_eq!(names.len(), tools.len());
     }
 }
