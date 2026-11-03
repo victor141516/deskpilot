@@ -3,7 +3,8 @@ use serde::Serialize;
 /// Error categories shared by the engine and every platform adapter.
 ///
 /// `kind()` is part of the tool contract: agents branch on it (for example
-/// `elevation_required` means "retry with `elevated: true`").
+/// `elevation_required` means "retry with `elevated: true`", and
+/// `permission_required` means the user must grant an OS privacy permission).
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("not supported: {0}")]
@@ -14,6 +15,8 @@ pub enum Error {
     InvalidArgument(String),
     #[error("administrator rights required: {0}")]
     ElevationRequired(String),
+    #[error("OS permission required: {0}")]
+    PermissionRequired(String),
     #[error("blocked by policy: {0}")]
     PolicyDenied(String),
     #[error("timed out: {0}")]
@@ -31,6 +34,7 @@ impl Error {
             Error::NotFound(_) => "not_found",
             Error::InvalidArgument(_) => "invalid_argument",
             Error::ElevationRequired(_) => "elevation_required",
+            Error::PermissionRequired(_) => "permission_required",
             Error::PolicyDenied(_) => "policy_denied",
             Error::Timeout(_) => "timeout",
             Error::Cancelled(_) => "cancelled",
@@ -52,6 +56,7 @@ impl Error {
             | Error::NotFound(m)
             | Error::InvalidArgument(m)
             | Error::ElevationRequired(m)
+            | Error::PermissionRequired(m)
             | Error::PolicyDenied(m)
             | Error::Timeout(m)
             | Error::Cancelled(m)

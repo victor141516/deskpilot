@@ -28,6 +28,7 @@ pub struct EncodedImage {
 }
 
 /// Where an encoded image sits on screen: `screen = origin + image_px / scale`.
+/// `scale` folds together the capture's pixel density and any downscaling.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ImageMapping {
     pub origin: Point,
@@ -46,26 +47,29 @@ pub fn to_image(cap: &Capture) -> Result<RgbaImage> {
 
 /// Crops a capture to `rect` (screen coordinates).
 pub fn crop(cap: &Capture, rect: Rect) -> Result<Capture> {
-    let full = Rect::new(
-        cap.origin.x,
-        cap.origin.y,
-        cap.width as i32,
-        cap.height as i32,
-    );
-    let r = full
+    let r = cap
+        .screen_rect()
         .intersect(&rect)
         .ok_or_else(|| Error::InvalidArgument("region is outside the captured area".into()))?;
-    let (ox, oy) = ((r.x - full.x) as usize, (r.y - full.y) as usize);
-    let mut rgba = Vec::with_capacity(r.width as usize * r.height as usize * 4);
-    for row in 0..r.height as usize {
+    let s = cap.pixel_scale;
+    let px = |v: i32| ((v as f64 * s).round() as i64).max(0) as usize;
+    let (ox, oy) = (px(r.x - cap.origin.x), px(r.y - cap.origin.y));
+    let w = px(r.width).min(cap.width as usize - ox.min(cap.width as usize));
+    let h = px(r.height).min(cap.height as usize - oy.min(cap.height as usize));
+    if w == 0 || h == 0 {
+        return Err(Error::InvalidArgument("region is outside the captured area".into()));
+    }
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for row in 0..h {
         let start = ((oy + row) * cap.width as usize + ox) * 4;
-        rgba.extend_from_slice(&cap.rgba[start..start + r.width as usize * 4]);
+        rgba.extend_from_slice(&cap.rgba[start..start + w * 4]);
     }
     Ok(Capture {
-        width: r.width as u32,
-        height: r.height as u32,
+        width: w as u32,
+        height: h as u32,
         rgba,
         origin: Point { x: r.x, y: r.y },
+        pixel_scale: s,
         occlusion_free: cap.occlusion_free,
     })
 }
@@ -109,7 +113,7 @@ pub fn encode(
     };
     let mapping = ImageMapping {
         origin: cap.origin,
-        scale,
+        scale: scale * cap.pixel_scale,
         width,
         height,
         source_width: cap.width,
@@ -141,6 +145,7 @@ pub fn resized(cap: &Capture, width: u32, height: u32) -> Result<Capture> {
         height,
         rgba: img.into_raw(),
         origin: cap.origin,
+        pixel_scale: cap.pixel_scale * width as f64 / cap.width.max(1) as f64,
         occlusion_free: cap.occlusion_free,
     })
 }
@@ -155,6 +160,7 @@ pub fn decode_file(path: &std::path::Path) -> Result<Capture> {
         height,
         rgba: img.into_raw(),
         origin: Point { x: 0, y: 0 },
+        pixel_scale: 1.0,
         occlusion_free: true,
     })
 }
@@ -163,7 +169,7 @@ pub fn decode_file(path: &std::path::Path) -> Result<Capture> {
 mod tests {
     use super::*;
 
-    fn capture(w: u32, h: u32) -> Capture {
+    fn capture(w: u32, h: u32, pixel_scale: f64) -> Capture {
         let rgba = (0..w * h)
             .flat_map(|i| [(i % 256) as u8, 0, 0, 255])
             .collect();
@@ -172,13 +178,14 @@ mod tests {
             height: h,
             rgba,
             origin: Point { x: 100, y: 50 },
+            pixel_scale,
             occlusion_free: true,
         }
     }
 
     #[test]
     fn crop_uses_screen_coordinates() {
-        let c = crop(&capture(10, 10), Rect::new(102, 53, 3, 2)).unwrap();
+        let c = crop(&capture(10, 10, 1.0), Rect::new(102, 53, 3, 2)).unwrap();
         assert_eq!(
             (c.width, c.height, c.origin),
             (3, 2, Point { x: 102, y: 53 })
@@ -188,12 +195,36 @@ mod tests {
     }
 
     #[test]
+    fn crop_on_a_dense_display_maps_screen_units_to_pixels() {
+        // 20x20 pixels covering 10x10 screen units.
+        let c = crop(&capture(20, 20, 2.0), Rect::new(102, 53, 3, 2)).unwrap();
+        assert_eq!(
+            (c.width, c.height, c.origin, c.screen_rect()),
+            (6, 4, Point { x: 102, y: 53 }, Rect::new(102, 53, 3, 2))
+        );
+        // first pixel is source pixel (4, 6) → index 6 * 20 + 4 = 124
+        assert_eq!(c.rgba[0], 124);
+        // A rectangle hanging off the edge is clipped to the image.
+        let edge = crop(&capture(20, 20, 2.0), Rect::new(108, 58, 10, 10)).unwrap();
+        assert_eq!((edge.width, edge.height), (4, 4));
+    }
+
+    #[test]
     fn encode_downscales_and_reports_mapping() {
-        let (img, map) = encode(&capture(400, 200), Some(100), ImageFormat::Png).unwrap();
+        let (img, map) = encode(&capture(400, 200, 1.0), Some(100), ImageFormat::Png).unwrap();
         assert_eq!((img.width, img.height), (100, 50));
         assert_eq!(map.scale, 0.25);
         assert_eq!(map.origin, Point { x: 100, y: 50 });
-        let (img, map) = encode(&capture(40, 20), Some(100), ImageFormat::Jpeg).unwrap();
+        let (img, map) = encode(&capture(40, 20, 1.0), Some(100), ImageFormat::Jpeg).unwrap();
         assert_eq!((img.width, map.scale, img.mime), (40, 1.0, "image/jpeg"));
+    }
+
+    #[test]
+    fn mapping_scale_includes_pixel_density() {
+        // 400 pixels over 200 screen units, downscaled to 100: image_px / 0.5 = screen units.
+        let (_, map) = encode(&capture(400, 200, 2.0), Some(100), ImageFormat::Png).unwrap();
+        assert_eq!(map.scale, 0.5);
+        let (_, map) = encode(&capture(40, 20, 2.0), None, ImageFormat::Png).unwrap();
+        assert_eq!(map.scale, 2.0);
     }
 }

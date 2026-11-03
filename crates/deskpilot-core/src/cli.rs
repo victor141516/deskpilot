@@ -89,6 +89,12 @@ pub fn run(platform: Box<dyn Platform>) -> ExitCode {
         }
     };
     let worker_args = worker_args(&cli);
+    match &cli.command {
+        Command::Tools { .. } => {}
+        // The MCP client is waiting for `initialize`: never block it.
+        Command::Mcp | Command::Worker { .. } => platform.request_permissions(false),
+        Command::Call { .. } => platform.request_permissions(true),
+    }
     match cli.command {
         Command::Mcp => {
             let dispatcher = Dispatcher::new(platform, policy, worker_args);

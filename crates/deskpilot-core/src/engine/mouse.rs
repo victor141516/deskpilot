@@ -4,12 +4,12 @@
 
 use std::thread::sleep;
 
-use super::keyboard::bring_to_front;
+use super::keyboard::{bring_to_front, shortcut};
 use super::{Engine, Intent, KEY_SETTLE, SETTLE};
 use crate::error::{Error, Result};
-use crate::keys::{Key, KeyChord, KeyStroke};
+use crate::keys::KeyStroke;
 use crate::model::{ElementInfo, Point, ToggleState};
-use crate::platform::{AxOp, MouseButton, MouseOp, Platform};
+use crate::platform::{AxOp, MouseButton, MouseOp, Platform, Shortcut};
 
 pub(super) fn run(
     engine: &Engine,
@@ -100,10 +100,11 @@ fn click_for_intent(
             Ok(clicks)
         }
         Intent::SetValue => {
+            let select_all = shortcut(p, Shortcut::SelectAll)?;
             click()?;
             sleep(KEY_SETTLE);
             p.send_keys(&[
-                KeyStroke::Chord(KeyChord::with(Key::Char('a'), true, false, false)),
+                KeyStroke::Chord(select_all),
                 KeyStroke::Text(value.unwrap_or_default().to_string()),
             ])?;
             Ok(1)

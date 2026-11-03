@@ -42,6 +42,7 @@ fn error_from_wire(e: WireError) -> Error {
         "not_found" => Error::NotFound(m),
         "invalid_argument" => Error::InvalidArgument(m),
         "elevation_required" => Error::ElevationRequired(m),
+        "permission_required" => Error::PermissionRequired(m),
         "policy_denied" => Error::PolicyDenied(m),
         "timeout" => Error::Timeout(m),
         "cancelled" => Error::Cancelled(m),

@@ -23,9 +23,9 @@ impl Dispatcher {
     /// `worker_args` are the command-line flags that reproduce `policy` in an elevated worker.
     pub fn new(platform: Box<dyn Platform>, policy: Policy, worker_args: Vec<String>) -> Self {
         Self {
+            tools: tools::registry(&platform.info()),
             platform,
             policy,
-            tools: tools::registry(),
             worker: Mutex::new(None),
             worker_args,
         }
