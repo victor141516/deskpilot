@@ -1,0 +1,143 @@
+name: Release
+
+'on':
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag to attach binaries to (e.g. v0.2.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build deskpilot (Windows x86_64)
+        run: cargo build --release --locked --bin deskpilot --target x86_64-pc-windows-msvc
+
+      - name: Package Windows artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/x86_64-pc-windows-msvc/release/deskpilot.exe dist/deskpilot.exe
+          cd dist
+          7z a deskpilot-x86_64-pc-windows-msvc.zip deskpilot.exe
+          sha256sum deskpilot.exe > deskpilot.exe.sha256
+          sha256sum deskpilot-x86_64-pc-windows-msvc.zip > deskpilot-x86_64-pc-windows-msvc.zip.sha256
+          ls -la
+
+      - name: Upload to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag_name }}"
+          if [ -n "$TAG" ]; then
+            echo "Uploading Windows artifacts to release $TAG..."
+            gh release upload "$TAG" \
+              dist/deskpilot.exe \
+              dist/deskpilot.exe.sha256 \
+              dist/deskpilot-x86_64-pc-windows-msvc.zip \
+              dist/deskpilot-x86_64-pc-windows-msvc.zip.sha256 \
+              --clobber
+          else
+            echo "No release tag found, skipping release upload."
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskpilot-windows-x86_64
+          path: dist/*
+
+  build-macos:
+    name: Build macOS (Universal)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Build macOS binaries
+        run: |
+          cargo build --release --locked --bin deskpilot --target aarch64-apple-darwin
+          cargo build --release --locked --bin deskpilot --target x86_64-apple-darwin
+
+      - name: Package macOS Universal and architecture binaries
+        run: |
+          mkdir -p dist
+
+          # Universal binary (arm64 + x86_64)
+          lipo -create -output dist/deskpilot-macos-universal \
+            target/aarch64-apple-darwin/release/deskpilot \
+            target/x86_64-apple-darwin/release/deskpilot
+          codesign -s - -f --identifier dev.deskpilot dist/deskpilot-macos-universal
+          chmod +x dist/deskpilot-macos-universal
+
+          # Architecture-specific binaries
+          cp target/aarch64-apple-darwin/release/deskpilot dist/deskpilot-aarch64-apple-darwin
+          codesign -s - -f --identifier dev.deskpilot dist/deskpilot-aarch64-apple-darwin
+          chmod +x dist/deskpilot-aarch64-apple-darwin
+
+          cp target/x86_64-apple-darwin/release/deskpilot dist/deskpilot-x86_64-apple-darwin
+          codesign -s - -f --identifier dev.deskpilot dist/deskpilot-x86_64-apple-darwin
+          chmod +x dist/deskpilot-x86_64-apple-darwin
+
+          # Tarballs
+          (cd dist && tar -czf deskpilot-macos-universal.tar.gz deskpilot-macos-universal)
+          (cd dist && tar -czf deskpilot-aarch64-apple-darwin.tar.gz deskpilot-aarch64-apple-darwin)
+          (cd dist && tar -czf deskpilot-x86_64-apple-darwin.tar.gz deskpilot-x86_64-apple-darwin)
+
+          # Checksums
+          cd dist
+          shasum -a 256 deskpilot-macos-universal > deskpilot-macos-universal.sha256
+          shasum -a 256 deskpilot-macos-universal.tar.gz > deskpilot-macos-universal.tar.gz.sha256
+          shasum -a 256 deskpilot-aarch64-apple-darwin.tar.gz > deskpilot-aarch64-apple-darwin.tar.gz.sha256
+          shasum -a 256 deskpilot-x86_64-apple-darwin.tar.gz > deskpilot-x86_64-apple-darwin.tar.gz.sha256
+
+          ls -la
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag_name }}"
+          if [ -n "$TAG" ]; then
+            echo "Uploading macOS artifacts to release $TAG..."
+            gh release upload "$TAG" \
+              dist/deskpilot-macos-universal \
+              dist/deskpilot-macos-universal.sha256 \
+              dist/deskpilot-macos-universal.tar.gz \
+              dist/deskpilot-macos-universal.tar.gz.sha256 \
+              dist/deskpilot-aarch64-apple-darwin.tar.gz \
+              dist/deskpilot-aarch64-apple-darwin.tar.gz.sha256 \
+              dist/deskpilot-x86_64-apple-darwin.tar.gz \
+              dist/deskpilot-x86_64-apple-darwin.tar.gz.sha256 \
+              --clobber
+          else
+            echo "No release tag found, skipping release upload."
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskpilot-macos
+          path: dist/*

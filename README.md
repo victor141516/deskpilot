@@ -6,7 +6,9 @@ Adapters ship for Windows and macOS. The core (engine, tools, MCP, CLI, policy, 
 
 ## Install: ask your agent
 
-Copy this block and paste it to your agent (Claude Code, Codex, oh my pi, Cursor…) on Windows (on macOS, build from source, below):
+### Windows
+
+Copy this block and paste it to your agent (Claude Code, Codex, oh my pi, Cursor…):
 
 ````text
 Install the "deskpilot" MCP server (Windows desktop automation, https://github.com/victor141516/deskpilot) and register it in this MCP client for my user.
@@ -30,8 +32,33 @@ Install the "deskpilot" MCP server (Windows desktop automation, https://github.c
 4. Reload the MCP servers (or tell me to restart the client) and call deskpilot's "info" tool to confirm it answers. Tell me the installed path and the configuration file you changed.
 ````
 
-To update: close the sessions using it and repeat step 1. To uninstall: delete the folder and the server entry in the client's configuration.
+### macOS
 
+Copy this block and paste it to your agent on macOS:
+
+````text
+Install the "deskpilot" MCP server (macOS desktop automation, https://github.com/victor141516/deskpilot) and register it in this MCP client for my user.
+
+1. Download the latest universal release binary to ~/.local/bin/deskpilot:
+   mkdir -p ~/.local/bin
+   curl -fsSL "https://github.com/victor141516/deskpilot/releases/latest/download/deskpilot-macos-universal" -o ~/.local/bin/deskpilot
+   chmod +x ~/.local/bin/deskpilot
+   codesign -s - -f --identifier dev.deskpilot ~/.local/bin/deskpilot
+2. Check that it runs: ~/.local/bin/deskpilot --version  (it must print "deskpilot <version>").
+3. Register it as a stdio MCP server named "deskpilot", command = absolute path of the binary (no environment variables), arguments ["mcp"]. If the client supports a per-server timeout, set it to 180 seconds.
+   - Claude Code: claude mcp add --scope user deskpilot -- ~/.local/bin/deskpilot mcp
+   - Codex: in ~/.codex/config.toml add
+       [mcp_servers.deskpilot]
+       command = '<absolute path>/.local/bin/deskpilot'
+       args = ["mcp"]
+       tool_timeout_sec = 180
+   - oh my pi: in ~/.omp/agent/mcp.json, inside "mcpServers", add
+       "deskpilot": { "type": "stdio", "command": "<absolute path>/.local/bin/deskpilot", "args": ["mcp"], "timeout": 180000 }
+   - Any other client: the equivalent entry in its MCP configuration file, without removing existing servers.
+4. Reload the MCP servers (or tell me to restart the client) and call deskpilot's "info" tool to confirm it answers. If the permission window appears, grant Accessibility and Screen Recording permissions in System Settings. Tell me the installed path and the configuration file you changed.
+````
+
+To update: close the sessions using it and repeat step 1. To uninstall: delete the binary and the server entry in the client's configuration.
 ## Principle: least invasive first
 
 Reading:
